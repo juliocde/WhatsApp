@@ -5,19 +5,26 @@ import android.os.Bundle;
 import android.support.v7.widget.Toolbar;
 import android.util.Log;
 import android.view.View;
+import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ListView;
 import android.widget.Toast;
 
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.ValueEventListener;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import whatsapp.cursoandroid.com.whatsapp.R;
+import whatsapp.cursoandroid.com.whatsapp.adapter.MensagemAdapter;
 import whatsapp.cursoandroid.com.whatsapp.config.ConfiguracaoFirebase;
 import whatsapp.cursoandroid.com.whatsapp.helper.Base64Custom;
 import whatsapp.cursoandroid.com.whatsapp.helper.Preferencias;
+import whatsapp.cursoandroid.com.whatsapp.model.Conversa;
 import whatsapp.cursoandroid.com.whatsapp.model.Mensagem;
 
 public class ConversaActivity extends AppCompatActivity {
@@ -26,6 +33,10 @@ public class ConversaActivity extends AppCompatActivity {
     private EditText editMensagem;
     private ImageButton btMensagem;
     private DatabaseReference firebase;
+    private ListView listView;
+    private ArrayList<Mensagem> mensagens;
+    private ArrayAdapter<Mensagem> adapter;
+    private ValueEventListener valueEventListenerMensagem;
 
     // dados do destinatário
     private String nomeUsuarioDestinatario;
@@ -33,6 +44,7 @@ public class ConversaActivity extends AppCompatActivity {
 
     // dados do rementente
     private String idUsuarioRemetente;
+    private String nomeUsuarioRemetente;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,10 +54,12 @@ public class ConversaActivity extends AppCompatActivity {
         toolbar = (Toolbar) findViewById(R.id.tb_conversa);
         editMensagem = (EditText) findViewById(R.id.edit_mensagem);
         btMensagem = (ImageButton) findViewById(R.id.bt_enviar);
+        listView = (ListView) findViewById(R.id.lv_conversas);
 
         // dados do usuário logado
         Preferencias preferencias = new Preferencias(ConversaActivity.this);
         idUsuarioRemetente = preferencias.getIdentificador();
+        nomeUsuarioRemetente = preferencias.getNome();
 
         Bundle extra = getIntent().getExtras();
 
@@ -59,6 +73,44 @@ public class ConversaActivity extends AppCompatActivity {
         toolbar.setTitle( nomeUsuarioDestinatario );
         toolbar.setNavigationIcon(R.drawable.ic_action_arrow_left);
         setSupportActionBar(toolbar);
+
+        // Monta listview e adapter
+        mensagens = new ArrayList<>();
+        adapter = new MensagemAdapter(ConversaActivity.this, mensagens);
+        listView.setAdapter( adapter );
+
+        // Recuperar mensagens do Firebase
+        firebase = ConfiguracaoFirebase.getFirebase()
+                    .child("mensagens")
+                    .child( idUsuarioRemetente )
+                    .child( idUsuarioDestinatario );
+
+        // Cria listener para mensagens
+        valueEventListenerMensagem = new ValueEventListener() {
+            @Override
+            public void onDataChange(DataSnapshot dataSnapshot) {
+
+                // Limpar mensagens
+                mensagens.clear();
+
+                // Recupera mensagens
+                for ( DataSnapshot dados: dataSnapshot.getChildren() ){
+                    Mensagem mensagem = dados.getValue( Mensagem.class );
+                    mensagens.add( mensagem );
+                }
+
+                adapter.notifyDataSetChanged();
+
+            }
+
+            @Override
+            public void onCancelled(DatabaseError databaseError) {
+
+            }
+        };
+
+        firebase.addValueEventListener( valueEventListenerMensagem );
+
 
         // Enviar mensagem
         btMensagem.setOnClickListener(new View.OnClickListener() {
@@ -75,7 +127,61 @@ public class ConversaActivity extends AppCompatActivity {
                     mensagem.setIdUsuario( idUsuarioRemetente );
                     mensagem.setMensagem( textoMensagem );
 
-                    salvarMensagem(idUsuarioRemetente, idUsuarioDestinatario , mensagem );
+                    // salvamos mensagem para o remetente
+                    Boolean retornoMensagemRemetente = salvarMensagem(idUsuarioRemetente, idUsuarioDestinatario , mensagem );
+                    if( !retornoMensagemRemetente ){
+                        Toast.makeText(
+                                ConversaActivity.this,
+                                "Problema ao salvar mensagem, tente novamente!",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }else {
+
+                        // salvamos mensagem para o destinatario
+                        Boolean retornoMensagemDestinatario = salvarMensagem(idUsuarioDestinatario, idUsuarioRemetente , mensagem );
+                        if( !retornoMensagemDestinatario ){
+                            Toast.makeText(
+                                    ConversaActivity.this,
+                                    "Problema ao enviar mensagem para o destinatário, tente novamente!",
+                                    Toast.LENGTH_LONG
+                            ).show();
+                        }
+
+                    }
+
+                    // salvamos Conversa para o remetente
+                    Conversa conversa = new Conversa();
+                    conversa.setIdUsuario( idUsuarioDestinatario );
+                    conversa.setNome( nomeUsuarioDestinatario );
+                    conversa.setMensagem( textoMensagem );
+                    Boolean retornoConversaRemetente = salvarConversa(idUsuarioRemetente, idUsuarioDestinatario, conversa);
+                    if( !retornoConversaRemetente ){
+                        Toast.makeText(
+                                ConversaActivity.this,
+                                "Problema ao salvar conversa, tente novamente!",
+                                Toast.LENGTH_LONG
+                        ).show();
+                    }else {
+                        // salvamos Conversa para o Destinatario
+
+                        conversa = new Conversa();
+                        conversa.setIdUsuario( idUsuarioRemetente );
+                        conversa.setNome( nomeUsuarioRemetente );
+                        conversa.setMensagem(textoMensagem);
+
+                        Boolean retornoConversaDestinatario = salvarConversa(idUsuarioDestinatario, idUsuarioRemetente, conversa );
+                        if( !retornoConversaDestinatario ){
+                            Toast.makeText(
+                                    ConversaActivity.this,
+                                    "Problema ao salvar conversa para o destinatário, tente novamente!",
+                                    Toast.LENGTH_LONG
+                            ).show();
+                        }
+
+                    }
+
+
+
 
                     editMensagem.setText("");
 
@@ -107,4 +213,24 @@ public class ConversaActivity extends AppCompatActivity {
         }
     }
 
+    private boolean salvarConversa(String idRemetente, String idDestinatario, Conversa conversa){
+        try {
+            firebase = ConfiguracaoFirebase.getFirebase().child("conversas");
+            firebase.child( idRemetente )
+                    .child( idDestinatario )
+                    .setValue( conversa );
+
+            return true;
+
+        }catch ( Exception e){
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        firebase.removeEventListener(valueEventListenerMensagem);
+    }
 }
